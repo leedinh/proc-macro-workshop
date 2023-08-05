@@ -23,17 +23,35 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let optionzed = fields.iter().map(|f| {
         let name = &f.ident;
         let ty = &f.ty;
-        quote! {
-            #name: Option<#ty>,
+        if ty_inner_type(ty).is_some() {
+            quote! {
+                #name: #ty
+            }
+        } else {
+            quote! {
+                #name: std::option::Option<#ty>
+            }
         }
     });
 
     let methods = fields.iter().map(|f| {
+        // if !f.attrs.is_empty() {
+        //     eprintln!("GGGGattrs: {:#?}", f.attrs);
+        // }
+        // quote! {
+        //     /* ... */
+        // }
         let name = &f.ident;
         let ty = &f.ty;
+        eprintln!("GGGGMETHODty: {:#?}", ty_inner_type(ty));
+        let (arg_type, value) = if let Some(inner_typ) = ty_inner_type(ty) {
+            (inner_typ, quote! {std::option::Option::Some(#name) })
+        } else {
+            (ty, quote! {std::option::Option::Some(#name) })
+        };
         quote! {
-            pub fn #name(&mut self, #name: #ty) -> &mut Self {
-                self.#name = Some(#name);
+            pub fn #name(&mut self, #name: #arg_type) -> &mut Self {
+                self.#name = #value;
                 self
             }
         }
@@ -41,8 +59,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let build_fields = fields.iter().map(|f| {
         let name = &f.ident;
-        quote! {
-            #name: self.#name.clone().ok_or(concat!(stringify!(#name), " is not set"))?
+        let ty = &f.ty;
+        eprintln!("GGGGty: {:#?}", ty_inner_type(ty));
+        if ty_inner_type(ty).is_some() {
+            quote! {
+                #name: self.#name.clone()
+            }
+        } else {
+            quote! {
+                #name: self.#name.clone().ok_or(concat!(stringify!(#name), " is not set"))?
+            }
         }
     });
 
@@ -53,7 +79,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         pub struct #bident {
-            #(#optionzed)*
+            #(#optionzed,)*
 
         }
         impl #name {
@@ -76,4 +102,30 @@ pub fn derive(input: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+fn ty_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    match ty {
+        syn::Type::Path(syn::TypePath { qself: None, path }) => {
+            let seg = path.segments.last()?;
+            if path.segments.len() != 1 || path.segments[0].ident != "Option" {
+                return None;
+            }
+            let args = &seg.arguments;
+            match args {
+                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                    args,
+                    ..
+                }) => {
+                    let arg = args.first()?;
+                    match arg {
+                        syn::GenericArgument::Type(ty) => Some(ty),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
